@@ -1,7 +1,7 @@
 name: My Workflow
 on: [push]
 jobs:
-  build:
+  preamble:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,7 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Exit if release already exists
         if: steps.check_release.outputs.exits == 'true'
         run: | 
@@ -41,8 +42,24 @@ jobs:
       - name: Move retia board files 
         run: |
           cp ${{ github.workspace }}/variants/retia-nibble /home/runner/meshtastic/variants/ -r
+      
+      - name: Make dest folder
+        run: |
+          mkdir /home/runner/dists/
+  build:
+    runs-on: ubuntulatest
+    needs: preamble
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [nibble-connect, nibble-esp32, nibble-rp2040, nibble-screen-connect]
 
+    steps:
       - name: Build nibble-screen-connect
         run: |
-          /home/runner/.platformio/penv/bin/platformio run --project-dir /home/runner/meshtastic/platformio.ini -e nibble-screen-connect
-
+          /home/runner/.platformio/penv/bin/platformio run --project-dir /home/runner/meshtastic/platformio.ini -e  ${{ matrix.target }}
+    
+      - name: Archive files
+        run: |
+          tar -cvf /home/runer/dists/${{ matrix.target }}.tar /home/runner/meshtastic/.pio/build/${{ matrix.target }} 
+          zip -r /home/runner/dists/${{ matrix.target }}.zip /home/runner/meshtastic/.pio/build/${{ matrix.target }} 
