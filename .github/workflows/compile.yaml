@@ -35,7 +35,7 @@ jobs:
       
       - name: Install meshtastic firmware
         run: |
-          git clone https://github.com/meshtastic/firmware
+          git clone https://github.com/meshtastic/firmware /home/runner/
 
       - name: Move retia board files 
         run: |
