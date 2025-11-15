@@ -23,7 +23,7 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Exit if release already exists
-        if: steps.check_release.outputs.exits = 'true'
+        if: steps.check_release.outputs.exits == 'true'
         run: | 
           echo "Release for this verion of meshtastic already exists. Exiting."
           exit 1
