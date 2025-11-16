@@ -27,9 +27,9 @@ jobs:
           fi
 
       - name: Exit if release already exists
-        if: steps.check_release.outputs.exits == 'true'
+        if: steps.check_release.outputs.exists == 'true'
         run: | 
-          echo "Release for this verion of meshtastic already exists. Exiting."
+          echo "Release for this version of meshtastic already exists. Exiting."
           exit 1
 
       - name: Install platformIO cli
@@ -48,13 +48,14 @@ jobs:
       
   
       - name: build
-        id: parallel_builds
         continue-on-error: true
         run: |
           set +e
           
           mkdir -p /home/runner/dists
           : > build_status.env
+
+          shopt -s nullglob
 
           targets=(
             nibble-connect
@@ -67,7 +68,7 @@ jobs:
             echo "Building target: $target"
 
             /home/runner/.platformio/penv/bin/platformio run \
-              --project-dir /home/runner/meshtastic/platformio.ini \
+              --project-dir /home/runner/meshtastic/ \
               -e "$target"
 
             status=$?
@@ -78,7 +79,7 @@ jobs:
               build_dir="/home/runner/meshtastic/.pio/build/${target}"
               bin_files=("${build_dir}"/*.bin)
               
-              if [ ${#bin_files[@]} -wq 0 ]; then
+              if [ ${bin_files[@]} -wq 0 ]; then
                 echo "No bins found, skipping archive"
                 continue
               fi
@@ -86,6 +87,7 @@ jobs:
               tar -cvf "/home/runner/dists/${target}.tar" "{bin_files[@]}" >/dev/null 2>&1
 
               zip -j "/home/runner/dists/${target}.zip" "{bin_files[@]}" >/dev/null 2>&1
+
             else
               echo "$target=failure" >> build_status.env
             fi
@@ -117,4 +119,5 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: /home/runner/dists/*
+          file_glob: true
           tag: ${{ steps.latest_meshtastic_tag.outputs.result }}
