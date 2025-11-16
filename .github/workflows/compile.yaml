@@ -1,5 +1,8 @@
 name: My Workflow
-on: [push]
+on: 
+  schedule:
+    - cron: "0 10 * * *"
+    - workflow_dispatch
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -65,10 +68,10 @@ jobs:
               echo "$target=success" >> build_status.env
               
               tar -cvf "/home/runner/dists/${target}.tar" \
-                "home/runner/meshtastic/.pio/buid/${target}" >/dev/null 2>&1
+                "home/runner/meshtastic/.pio/buid/${target}/*.bin" >/dev/null 2>&1
 
               zip -r "/home/runner/dists/${target}.zip" \
-                "/home/runner/meshtastic/.pio/build/$target" >/dev/null 2>&1
+                "/home/runner/meshtastic/.pio/build/$target/*.bin" >/dev/null 2>&1
             else
               echo "$target=failure" >> build_status.env
             fi
@@ -77,26 +80,15 @@ jobs:
           }
           
           run_build nibble-connect &
-          pid1=$!
           
           run_build nibble-screen-connect &
-          pid2=$!
           
           run_build nibble-rp2040 &
-          pid3=$!
           
           run_build nibble-esp32 &
-          pid4=$!
-          
-
-          wait $pid1
-          wait $pid2
-          wait $pid3
-          wait $pid4
           
           echo "Build summary: "
           cat build_status.env || echo "No status file"
-          wait $pid1
 
       - name: Create Release
         id: create_release
@@ -117,5 +109,3 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: /home/runner/dists/*
           tag: ${{ steps.latest_meshtastic_tag.outputs.result }}
-          overwrite: true
-          file_glob: true
