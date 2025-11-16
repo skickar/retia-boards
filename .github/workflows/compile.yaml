@@ -1,0 +1,111 @@
+name: Compile 
+on: 
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest meshtastic version 
+        id: latest_meshtastic_tag
+        run: |
+          result=$(curl -sL https://api.github.com/repos/meshtastic/firmware/releases/latest | jq -r '.tag_name' )
+          echo "result=$result" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists locally
+        id: check_release
+        env: 
+          RELEASE_TAG: ${{ steps.latest_meshtastic_tag.outputs.result }}
+        run: | 
+          set -e
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Exit if release already exists
+        if: steps.check_release.outputs.exits == 'true'
+        run: | 
+          echo "Release for this verion of meshtastic already exists. Exiting."
+          exit 1
+
+      - name: Install platformIO cli
+        run: |
+          curl -fsSL -o get-platformio.py https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
+          python3 get-platformio.py
+      
+      - name: Install meshtastic firmware
+        run: |
+          git clone https://github.com/meshtastic/firmware /home/runner/meshtastic
+          ls /home/runner/meshtastic
+
+      - name: Move retia board files 
+        run: |
+          cp ${{ github.workspace }}/variants/retia-nibble /home/runner/meshtastic/variants/ -r
+      
+  
+      - name: build
+        id: parallel_builds
+        continue-on-error: true
+        run: |
+          set +e
+          
+          mkdir -p /home/runner/dists
+          : > build_status.env
+          run_build() {
+            target="$1"
+            echo "Starting build: $target"
+
+            /home/runner/.platformio/penv/bin/platformio run \
+              --project-dir /home/runner/meshtastic/platformio.ini \
+              -e "$target"
+
+            status=$?
+            if [ $status -eq 0 ]; then
+              echo "$target=success" >> build_status.env
+              
+              tar -cvf "/home/runner/dists/${target}.tar" \
+                "home/runner/meshtastic/.pio/buid/${target}/*.bin" >/dev/null 2>&1
+
+              zip -r "/home/runner/dists/${target}.zip" \
+                "/home/runner/meshtastic/.pio/build/$target/*.bin" >/dev/null 2>&1
+            else
+              echo "$target=failure" >> build_status.env
+            fi
+
+            echo "Build $target finished with status $status"
+          }
+          
+          run_build nibble-connect &
+          
+          run_build nibble-screen-connect &
+          
+          run_build nibble-rp2040 &
+          
+          run_build nibble-esp32 &
+          
+          echo "Build summary: "
+          cat build_status.env || echo "No status file"
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.latest_meshtastic_tag.outputs.result }}
+          release_name: Retia binaries for Meshtastic ${{ steps.latest_meshtastic_tag.outputs.result }}
+          body: |
+            Compiled versions of [meshtastic](https://github.com/meshtastic/firmware) for use with retia boards, compiled using meshtastic release ${{ steps.latest_meshtastic_tag.outputs.result }}
+          draft: false
+          prerelease: false
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: /home/runner/dists/*
+          tag: ${{ steps.latest_meshtastic_tag.outputs.result }}
