@@ -15,27 +15,6 @@ jobs:
           result=$(curl -sL https://api.github.com/repos/meshtastic/firmware/releases/latest | jq -r '.tag_name' )
           echo "result=$result" >> $GITHUB_OUTPUT
 
-      # --- COMMENTED OUT TO ALLOW RE-BUILDS FOR TESTING ---
-      # - name: Check if release exists locally
-      #   id: check_release
-      #   env: 
-      #     RELEASE_TAG: ${{ steps.latest_meshtastic_tag.outputs.result }}
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   run: | 
-      #     set -e
-      #     if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-      #       echo "exists=true" >> "$GITHUB_OUTPUT"
-      #     else
-      #       echo "exists=false" >> "$GITHUB_OUTPUT"
-      #     fi
-
-      # - name: Exit if release already exists
-      #   if: steps.check_release.outputs.exists == 'true'
-      #   run: | 
-      #     echo "Release for this version already exists. Exiting."
-      #     exit 1
-      # -----------------------------------------------------
-
       - name: Install platformIO cli
         run: |
           curl -fsSL -o get-platformio.py https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
@@ -45,13 +24,26 @@ jobs:
         run: |
           git clone https://github.com/meshtastic/firmware /home/runner/meshtastic
 
-      - name: Move retia board files 
+      - name: Install Custom Variant
         run: |
-          cp ${{ github.workspace }}/variants/retia-nibble /home/runner/meshtastic/variants/ -r
-      
+          # 1. Find the folder (Handles 'nibble-zero-connet' OR 'nibble-zero-connect')
+          SRC_PATH=$(find ${{ github.workspace }}/variants/retia-nibble -maxdepth 1 -name "nibble-zero-conne*" -type d | head -n 1)
+          
+          if [ -z "$SRC_PATH" ]; then
+            echo "ERROR: Could not find nibble-zero-connect folder in variants/retia-nibble/"
+            ls -R ${{ github.workspace }}/variants/
+            exit 1
+          fi
+
+          echo "Found variant source at: $SRC_PATH"
+          
+          # 2. Copy it to the standard Meshtastic variants location with the CORRECT name
+          # This ensures PlatformIO finds 'variant.h' automatically
+          cp -r "$SRC_PATH" /home/runner/meshtastic/variants/nibble-zero-connect
+
       - name: Inject Custom Environment to PlatformIO
         run: |
-          # FIX: We use the spelling 'nibble-zero-connet' in the -I flag to match your repo folder
+          # We use 'board_build.variant' to let PIO handle the include paths
           cat <<EOF >> /home/runner/meshtastic/platformio.ini
 
           [env:nibble-zero-connect]
@@ -59,10 +51,14 @@ jobs:
           board = esp32-s3-zero
           board_level = pr
           board_check = true
+          
+          ; TELL PIO TO USE THE FOLDER WE JUST COPIED
+          board_build.variant = nibble-zero-connect
+          
           build_flags = 
             \${esp32_base.build_flags}
             -D PRIVATE_HW
-            -I variants/retia-nibble/nibble-zero-connet
+            ; Safety Flags to prevent crash
             -D UART1_TX_PIN=-1
             -D UART1_RX_PIN=-1
             -D PIN_I2S_SD=-1
@@ -72,13 +68,9 @@ jobs:
           EOF
   
       - name: build
-        # Removed continue-on-error so we see if it fails immediately
         run: |
           set +e
           mkdir -p /home/runner/dists
-          shopt -s nullglob
-
-          # We only build your specific target
           target="nibble-zero-connect"
           echo "Building target: $target"
 
@@ -102,8 +94,6 @@ jobs:
             exit 1
           fi
 
-      # CHANGED: Upload as Artifact (Zip file) instead of Release
-      # This is much better for testing and won't fail if the tag exists
       - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
