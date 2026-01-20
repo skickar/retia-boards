@@ -1,4 +1,4 @@
-Name: Compile 
+name: Compile 
 on: 
   schedule:
     - cron: "0 10 * * *"
