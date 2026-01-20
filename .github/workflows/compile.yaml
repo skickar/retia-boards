@@ -1,4 +1,4 @@
-name: Compile 
+Name: Compile 
 on: 
   schedule:
     - cron: "0 10 * * *"
@@ -49,6 +49,28 @@ jobs:
         run: |
           cp ${{ github.workspace }}/variants/retia-nibble /home/runner/meshtastic/variants/ -r
       
+      - name: Inject Custom Environment to PlatformIO
+        run: |
+          # This step appends your custom board config to the downloaded meshtastic platformio.ini
+          # We include the FIX flags here to ensure UART1/I2S doesn't crash the board.
+          cat <<EOF >> /home/runner/meshtastic/platformio.ini
+
+          [env:nibble-zero-connect]
+          extends = esp32s3_base
+          board = esp32-s3-zero
+          board_level = pr
+          board_check = true
+          build_flags = 
+            \${esp32_base.build_flags}
+            -D PRIVATE_HW
+            -I variants/retia-nibble/nibble-zero-connect
+            -D UART1_TX_PIN=-1
+            -D UART1_RX_PIN=-1
+            -D PIN_I2S_SD=-1
+            -D PIN_I2S_WS=-1
+            -D PIN_I2S_SCK=-1
+            -D PIN_GPIO18=-1
+          EOF
   
       - name: build
         continue-on-error: true
@@ -61,12 +83,12 @@ jobs:
           shopt -s nullglob
 
           targets=(
-            nibble-connect
-            nibble-esp32
-            nibble-rp2040
-            nibble-screen-connect
+            # nibble-connect
+            # nibble-esp32
+            # nibble-rp2040
+            # nibble-screen-connect
             nibble-zero-connect 
-            nugget-blueooth-rmf95
+            # nugget-blueooth-rmf95
           )
 
           for target in "${targets[@]}"; do
@@ -84,7 +106,7 @@ jobs:
               build_dir="/home/runner/meshtastic/.pio/build/${target}"
               bin_files=("${build_dir}"/*.bin)
               
-              if [ ${bin_files[@]} -eq 0 ]; then
+              if [ ${#bin_files[@]} -eq 0 ]; then
                 echo "No bins found, skipping archive"
                 continue
               fi
