@@ -37,15 +37,13 @@ jobs:
 
           echo "Found variant source at: $SRC_PATH"
           
-          # 2. Copy it to the build directory with the CORRECT name
-          # We copy it to the root 'variants' folder so our include path is simple
+          # 2. Copy it to the STANDARD variants directory
           cp -r "$SRC_PATH" /home/runner/meshtastic/variants/nibble-zero-connect
 
       - name: Inject Custom Environment to PlatformIO
         run: |
-          # We use the standard 'esp32s3_base' (so it finds pins_arduino.h automatically)
-          # We use '-I' to force it to see your variant.h
-          # We use '-D' flags to disable the crashing pins
+          # FIX: We explicitly define 'variants_dir' and 'variant' 
+          # This forces PIO to look in the local folder for BOTH variant.h and pins_arduino.h
           
           cat <<EOF >> /home/runner/meshtastic/platformio.ini
 
@@ -55,10 +53,13 @@ jobs:
           board_level = pr
           board_check = true
           
+          ; TELL PIO TO LOOK IN LOCAL VARIANTS FOLDER
+          board_build.variants_dir = variants
+          board_build.variant = nibble-zero-connect
+          
           build_flags = 
             \${esp32_base.build_flags}
             -D PRIVATE_HW
-            -I variants/nibble-zero-connect
             
             ; --- SAFETY FIXES ---
             ; Disable UART1 (GPS) on pins 17/18 to prevent Flipper Crash
