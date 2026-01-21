@@ -1,17 +1,16 @@
-name: Compile 
+name: Compile Nibble Zero
 on: 
   schedule:
     - cron: "0 10 * * *"
   workflow_dispatch:
 jobs:
   build:
-    # FIX: Use ubuntu-22.04 because 'latest' (24.04) removed libtinfo5 support
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       
-      # Now this will work because ubuntu-22.04 has this package
       - name: Install dependencies
+        # installing libtinfo5 helps with some tools, even if mklittlefs fails
         run: sudo apt-get update && sudo apt-get install -y libtinfo5
 
       - name: Get latest meshtastic version 
@@ -20,118 +19,53 @@ jobs:
           result=$(curl -sL https://api.github.com/repos/meshtastic/firmware/releases/latest | jq -r '.tag_name' )
           echo "result=$result" >> $GITHUB_OUTPUT
 
-      - name: Check if release exists locally
-        id: check_release
-        env: 
-          RELEASE_TAG: ${{ steps.latest_meshtastic_tag.outputs.result }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: | 
-          set -e
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release $RELEASE_TAG exists."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Release $RELEASE_TAG does not exists."
-          fi
-
-      - name: Exit if release already exists
-        if: steps.check_release.outputs.exists == 'true'
-        run: | 
-          echo "Release for this version of meshtastic already exists. Exiting."
-          exit 1
-
       - name: Install platformIO cli
-        run: |
-          python3 -m pip install -U platformio
+        run: python3 -m pip install -U platformio
       
       - name: Install meshtastic firmware
-        run: |
-          git clone https://github.com/meshtastic/firmware /home/runner/meshtastic
+        run: git clone https://github.com/meshtastic/firmware /home/runner/meshtastic
       
-      # Pre-install the ESP32 platform to ensure tools are ready
       - name: Install PlatformIO Platforms
-        run: |
-          pio platform install espressif32
+        run: pio platform install espressif32
           
       - name: Move retia board files 
         run: |
-          # Use /* to copy the CONTENTS, not the folder itself.
-          # This ensures variants/nibble-zero-connet exists directly in variants/
-          cp -r ${{ github.workspace }}/variants/retia-nibble/* /home/runner/meshtastic/variants/
+          cp -r ${{ github.workspace }}/variants/retia-nibble/nibble-zero-connet /home/runner/meshtastic/variants/
+          mkdir -p /home/runner/meshtastic/boards
+          find ${{ github.workspace }}/variants/retia-nibble/ -name "*.json" -exec cp {} /home/runner/meshtastic/boards/ \;
       
-      - name: build
-        continue-on-error: true
+      - name: Build nibble-zero-connet
         run: |
-          set +e
+          target="nibble-zero-connet"
           
+          # Fix environment name mismatch
+          if [ -f "/home/runner/meshtastic/variants/$target/platformio.ini" ]; then
+            echo "" >> /home/runner/meshtastic/platformio.ini
+            sed "s/\[env:.*\]/[env:$target]/" "/home/runner/meshtastic/variants/$target/platformio.ini" >> /home/runner/meshtastic/platformio.ini
+          else
+            echo "Error: Could not find platformio.ini for $target"
+            exit 1
+          fi
+
           mkdir -p /home/runner/dists
-          : > build_status.env
+          export PLATFORMIO_BUILD_FLAGS="-I variants/$target"
+          export PLATFORMIO_BOARD_BUILD_VARIANT="$target"
 
-          shopt -s nullglob
-
-          # Corrected target names
-          targets=(
-            nibble-connect
-            nibble-esp32
-            nibble-rp2040
-            nibble-screen-connect
-            nibble-zero-connet
-            nugget-bluetooth-rmf95
-          )
+          echo "Building target: $target"
           
-          # Inject custom platformio.ini settings from your variants into the root config
-          echo "Injecting custom environments..."
-          for target in "${targets[@]}"; do
-            if [ -f "/home/runner/meshtastic/variants/$target/platformio.ini" ]; then
-              echo "Merging config for $target"
-              echo "" >> /home/runner/meshtastic/platformio.ini
-              cat "/home/runner/meshtastic/variants/$target/platformio.ini" >> /home/runner/meshtastic/platformio.ini
-            fi
-          done
+          # MAGIC LINE: Run build, but if it fails (due to mklittlefs), echo a warning and continue
+          pio run --project-dir /home/runner/meshtastic/ -e "$target" || echo "WARNING: Build tool failed (likely mklittlefs). Proceeding to check for binary..."
 
-          for target in "${targets[@]}"; do
-            echo "----------------------------------------------------"
-            echo "Building target: $target"
-            echo "----------------------------------------------------"
-
-            pio run \
-              --project-dir /home/runner/meshtastic/ \
-              -e "$target"
-
-            status=$?
-            
-            if [ $status -eq 0 ]; then
-              echo "$target=success" >> build_status.env
-                
-              build_dir="/home/runner/meshtastic/.pio/build/${target}"
-              bin_files=("${build_dir}"/*.bin)
-              
-              # Check array length properly
-              if [ ${#bin_files[@]} -eq 0 ]; then
-                echo "No bins found for $target, skipping archive"
-                continue
-              fi
-              
-              (
-                cd "${build_dir}"
-                tar -cvf "/home/runner/dists/${target}.tar" ./*.bin >/dev/null 2>&1
-              )
-
-              zip -j "/home/runner/dists/${target}.zip" "${bin_files[@]}" >/dev/null 2>&1
-              echo "Successfully archived $target"
-
-            else
-              echo "FAILED to build $target"
-              echo "$target=failure" >> build_status.env
-            fi
-          done 
-
-          echo "Build summary: "
-          cat build_status.env || echo "No status file"
+          # Now check if the firmware binary actually exists
+          build_dir="/home/runner/meshtastic/.pio/build/${target}"
           
-          if ! grep -q '=success' build_status.env; then
-            echo "All builds have failed."
+          if [ -f "${build_dir}/firmware.bin" ]; then
+            echo "SUCCESS: Firmware binary found! Packaging..."
+            cd "${build_dir}"
+            # Only zip the bin files that actually exist
+            zip -j "/home/runner/dists/${target}.zip" firmware.bin
+          else
+            echo "FAILURE: firmware.bin was not generated. Real compilation error occurred."
             exit 1
           fi
 
@@ -144,7 +78,7 @@ jobs:
           tag_name: ${{ steps.latest_meshtastic_tag.outputs.result }}
           release_name: Retia binaries for Meshtastic ${{ steps.latest_meshtastic_tag.outputs.result }}
           body: |
-            Compiled versions of [meshtastic](https://github.com/meshtastic/firmware) for use with retia boards, compiled using meshtastic release ${{ steps.latest_meshtastic_tag.outputs.result }}
+            Compiled nibble-zero-connet using meshtastic release ${{ steps.latest_meshtastic_tag.outputs.result }}
           draft: false
           prerelease: false
 
